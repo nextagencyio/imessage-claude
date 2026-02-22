@@ -89,9 +89,6 @@ async function main() {
 
       log.info(`Invoking Claude${session ? ` (session: ${session.sessionId.substring(0, 8)}...)` : ' (new session)'}...`);
 
-      // Send a "thinking" indicator so the user knows it's working
-      await sendBotResponse(config.selfHandle, 'Thinking...', config.responsePrefix);
-
       const result = await invokeClaudeWithTimeout(text, options, config.claudeTimeoutMs);
 
       if (result.is_error) {

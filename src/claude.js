@@ -2,8 +2,10 @@ const { spawn } = require('child_process');
 const log = require('./logger');
 
 function invokeClaude(prompt, options = {}) {
-  return new Promise((resolve, reject) => {
-    const args = ['-p', prompt, '--output-format', 'json'];
+  let child;
+
+  const promise = new Promise((resolve, reject) => {
+    const args = ['-p', prompt, '--output-format', 'json', '--dangerously-skip-permissions'];
 
     if (options.sessionId) {
       args.push('--resume', options.sessionId);
@@ -19,9 +21,9 @@ function invokeClaude(prompt, options = {}) {
 
     log.debug(`Spawning: claude ${args.join(' ')}`);
 
-    const child = spawn('claude', args, {
+    child = spawn('claude', args, {
       cwd: options.workingDirectory || process.cwd(),
-      stdio: ['inherit', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env },
     });
 
@@ -54,15 +56,27 @@ function invokeClaude(prompt, options = {}) {
       reject(new Error(`Failed to spawn claude: ${err.message}`));
     });
   });
+
+  // Attach the child process so the timeout can kill it
+  promise._child = child;
+  return promise;
 }
 
 function invokeClaudeWithTimeout(prompt, options, timeoutMs) {
-  return Promise.race([
-    invokeClaude(prompt, options),
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`Claude timed out after ${Math.round(timeoutMs / 1000)}s`)), timeoutMs)
-    ),
-  ]);
+  const claudePromise = invokeClaude(prompt, options);
+
+  const timeoutPromise = new Promise((_, reject) => {
+    setTimeout(() => {
+      // Kill the child process so it doesn't linger
+      if (claudePromise._child && !claudePromise._child.killed) {
+        log.warn('Killing timed-out Claude process');
+        claudePromise._child.kill('SIGTERM');
+      }
+      reject(new Error(`Claude timed out after ${Math.round(timeoutMs / 1000)}s`));
+    }, timeoutMs);
+  });
+
+  return Promise.race([claudePromise, timeoutPromise]);
 }
 
 module.exports = { invokeClaude, invokeClaudeWithTimeout };

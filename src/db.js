@@ -12,6 +12,7 @@ class MessagePoller {
     this.lastRowId = 0;
     this.selfChatIds = [];
     this.db = null;
+    this.recentTexts = new Map(); // text -> timestamp, for dedup within 5s window
   }
 
   start() {
@@ -76,8 +77,9 @@ class MessagePoller {
   _poll() {
     try {
       const placeholders = this.selfChatIds.map(() => '?').join(',');
+      // DISTINCT prevents duplicates when a self-message is joined to the chat twice
       const stmt = this.db.prepare(
-        `SELECT m.ROWID, m.text, m.attributedBody, m.is_from_me, m.date
+        `SELECT DISTINCT m.ROWID, m.text, m.attributedBody, m.is_from_me, m.date
          FROM message m
          INNER JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
          WHERE cmj.chat_id IN (${placeholders})
@@ -88,6 +90,12 @@ class MessagePoller {
 
       const rows = stmt.all(...this.selfChatIds, this.lastRowId);
 
+      // Clean up old dedup entries (older than 10s)
+      const now = Date.now();
+      for (const [key, ts] of this.recentTexts) {
+        if (now - ts > 10000) this.recentTexts.delete(key);
+      }
+
       for (const row of rows) {
         this.lastRowId = row.ROWID;
 
@@ -96,6 +104,15 @@ class MessagePoller {
 
         // Skip bot's own responses
         if (text.startsWith(this.responsePrefix)) continue;
+
+        // Dedup: skip if we saw the exact same text within 5 seconds
+        const dedupKey = text.trim();
+        const lastSeen = this.recentTexts.get(dedupKey);
+        if (lastSeen && now - lastSeen < 5000) {
+          log.debug(`Skipping duplicate [ROWID ${row.ROWID}]: "${text.substring(0, 40)}"`);
+          continue;
+        }
+        this.recentTexts.set(dedupKey, now);
 
         log.debug(`Message [ROWID ${row.ROWID}]: "${text.substring(0, 80)}"`);
 

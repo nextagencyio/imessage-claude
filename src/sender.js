@@ -6,6 +6,29 @@ const execFileAsync = promisify(execFile);
 
 const MAX_MESSAGE_LENGTH = 10000;
 
+function stripMarkdown(text) {
+  return text
+    // Code blocks: ```lang\ncode\n``` → just the code
+    .replace(/```[\w]*\n?([\s\S]*?)```/g, '$1')
+    // Inline code: `code` → code
+    .replace(/`([^`]+)`/g, '$1')
+    // Bold: **text** or __text__ → text
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/__(.+?)__/g, '$1')
+    // Italic: *text* or _text_ → text
+    .replace(/(?<!\w)\*([^*]+?)\*(?!\w)/g, '$1')
+    .replace(/(?<!\w)_([^_]+?)_(?!\w)/g, '$1')
+    // Headers: ## Header → Header
+    .replace(/^#{1,6}\s+/gm, '')
+    // Markdown links: [text](url) → text (url)
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)')
+    // Horizontal rules
+    .replace(/^[-*_]{3,}\s*$/gm, '')
+    // Clean up extra blank lines
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 function escapeForAppleScript(str) {
   return str
     .replace(/\\/g, '\\\\')
@@ -67,7 +90,7 @@ function splitIntoChunks(text, maxLen) {
 }
 
 async function sendBotResponse(handle, text, prefix) {
-  const fullText = prefix + text;
+  const fullText = prefix + stripMarkdown(text);
   const chunks = splitIntoChunks(fullText, MAX_MESSAGE_LENGTH);
 
   for (let i = 0; i < chunks.length; i++) {
